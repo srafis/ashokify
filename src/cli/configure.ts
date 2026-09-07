@@ -62,7 +62,6 @@ export async function configure(
 	facts: ProjectFacts,
 	root: string,
 	ui: UserInterface,
-	saved?: DeploymentConfig,
 ): Promise<DeploymentConfig> {
 	await ui.select(
 		"provider",
@@ -89,19 +88,12 @@ export async function configure(
 		"branches",
 		"Which branches should run the pipeline?",
 		defaults.map(value => ({ value, label: value })),
-		saved
-			? saved.environments
-					.map(env => env.branch)
-					.filter(branch => defaults.includes(branch))
-			: defaults,
+		defaults,
 	)
 	const additional = await ui.text(
 		"additionalBranches",
 		"Additional branches, separated by commas",
-		saved?.environments
-			.map(env => env.branch)
-			.filter(branch => !defaults.includes(branch))
-			.join(", ") ?? "",
+		"",
 		value => {
 			try {
 				mapBranches([...selected, ...list(value)])
@@ -119,7 +111,7 @@ export async function configure(
 	const name = await ui.text(
 		"name",
 		"App name",
-		saved?.application.name ?? facts.name,
+		facts.name,
 		value =>
 			required(value) ||
 			cleanLine(value) ||
@@ -127,40 +119,18 @@ export async function configure(
 				? "Enter a name containing letters or numbers."
 				: undefined),
 	)
-	if (["frontend", "app", "web", "client"].includes(name.toLowerCase()))
-		ui.warn(
-			`'${name}' is a common name. Use a distinct deployment name below to identify this app on a shared host.`,
-		)
-	const id = await ui.text(
-		"id",
-		"Deployment name for Docker images and containers",
-		saved?.application.id ?? normalizeIdentifier(name),
-		identifier,
-	)
+	const id = normalizeIdentifier(name)
 	const hostname = await ui.text(
 		"registry",
 		"Container registry hostname",
-		saved?.registry.hostname ?? "sifars.azurecr.io",
+		"sifars.azurecr.io",
 		value =>
 			/^[a-z0-9][a-z0-9.-]*(?::\d+)?$/.test(value)
 				? undefined
 				: "Enter a registry hostname without a URL scheme.",
 	)
-	const repository = await ui.text(
-		"repository",
-		"Image name in the registry",
-		saved?.registry.repository ?? id,
-		value =>
-			/^[a-z0-9]+(?:[._/-][a-z0-9]+)*$/.test(value)
-				? undefined
-				: "Enter a lowercase image repository path.",
-	)
-	const registryConnection = await ui.text(
-		"registryConnection",
-		"Registry service connection name in Azure DevOps",
-		saved?.pipeline.registryConnection ?? hostname,
-		reference,
-	)
+	const repository = id
+	const registryConnection = hostname
 	const detectedManager =
 		facts.packageManagerCandidates.length === 1
 			? facts.packageManager
@@ -174,18 +144,14 @@ export async function configure(
 				value: value as PackageManager,
 				label: packageManagerLabels[value as PackageManager],
 			})),
-			saved?.build.packageManager ?? facts.packageManager,
+			facts.packageManager,
 		))
 	if (detectedManager)
 		ui.info(`Package manager: ${packageManagerLabels[detectedManager]}`)
 	const managerVersion = await ui.text(
 		"packageManagerVersion",
 		`${packageManagerLabels[manager]} version for builds`,
-		saved?.build.packageManager === manager
-			? saved.build.packageManagerVersion
-			: facts.packageManager === manager
-				? facts.packageManagerVersion
-				: "",
+		facts.packageManager === manager ? facts.packageManagerVersion : "",
 		version,
 	)
 	const lockNames: Record<PackageManager, string[]> = {
@@ -214,9 +180,8 @@ export async function configure(
 					"lockfile",
 					"Which lockfile should the build use?",
 					existingLocks.map(value => ({ value, label: value })),
-					saved?.build.lockfile,
 				)
-	let proposedNode = saved?.build.nodeVersion ?? facts.nodeVersion ?? ""
+	let proposedNode = facts.nodeVersion ?? ""
 	if (facts.nodeConstraint && !validRange(facts.nodeConstraint))
 		throw new Error(
 			"package.json engines.node is not a valid version range. Correct and commit it before running setup again.",
@@ -233,7 +198,7 @@ export async function configure(
 		`Node.js version for builds${
 			facts.nodeConstraint
 				? `, project requires ${facts.nodeConstraint}`
-				: !saved?.build.nodeVersion && proposedNode
+				: proposedNode
 					? `, default Node.js ${major(proposedNode)}`
 					: ""
 		}`,
@@ -253,8 +218,7 @@ export async function configure(
 	const command = await ui.text(
 		"command",
 		"Build command",
-		saved?.build.command ??
-			(manifest.scripts?.build ? `${manager} run build` : ""),
+		manifest.scripts?.build ? `${manager} run build` : "",
 		value => {
 			if (
 				!/^[A-Za-z0-9_./:@%+=,-]+(?: [A-Za-z0-9_./:@%+=,-]+)*$/.test(
@@ -273,7 +237,7 @@ export async function configure(
 	const outputDirectory = await ui.text(
 		"outputDirectory",
 		"Build output folder",
-		saved?.build.outputDirectory ?? facts.outputDirectory,
+		facts.outputDirectory,
 		safePath,
 	)
 	const architecture = await ui.select<
@@ -285,7 +249,7 @@ export async function configure(
 			{ value: "linux/amd64", label: "Linux x64", hint: "Intel or AMD" },
 			{ value: "linux/arm64", label: "Linux ARM64" },
 		],
-		saved?.build.architecture ?? "linux/amd64",
+		"linux/amd64",
 	)
 	const servingChoice = await ui.select(
 		"serving",
@@ -307,29 +271,21 @@ export async function configure(
 				hint: "Generate an Nginx container and config",
 			},
 		],
-		saved?.serving.mode === "container"
-			? saved.serving.nginx
-				? "nginx"
-				: "container"
-			: "artifact",
+		"artifact",
 	)
 	let serving: DeploymentConfig["serving"]
-	const prior =
-		saved?.serving.mode === "container" ? saved.serving : undefined
 	if (servingChoice === "artifact") {
 		serving = {
 			mode: "artifact",
 			destination:
-				saved?.serving.mode === "artifact"
-					? saved.serving.destination
-					: "The pipeline publishes the built files. Set up delivery and hosting separately.",
+				"The pipeline publishes the built files. Set up delivery and hosting separately.",
 		}
 	} else {
 		const nginx = servingChoice === "nginx"
 		const image = await ui.text(
 			"servingImage",
 			"Base image for serving the app, including tag or digest",
-			prior?.image ?? "",
+			"",
 			value =>
 				/^[a-zA-Z0-9][a-zA-Z0-9._/:@-]+$/.test(value) &&
 				value.includes(":")
@@ -339,7 +295,7 @@ export async function configure(
 		const assetPath = await ui.text(
 			"assetPath",
 			"Folder for built files inside the container",
-			prior?.assetPath ?? (nginx ? "/usr/share/nginx/html" : ""),
+			nginx ? "/usr/share/nginx/html" : "",
 			value =>
 				/^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+$/.test(value) &&
 				!value.split("/").includes("..")
@@ -349,7 +305,7 @@ export async function configure(
 		const rawCommand = await ui.text(
 			"servingCommand",
 			"Container start command as JSON, [] uses the image default",
-			JSON.stringify(prior?.command ?? []),
+			"[]",
 			value => {
 				try {
 					const parsed = JSON.parse(value)
@@ -369,20 +325,20 @@ export async function configure(
 			await ui.text(
 				"containerPort",
 				"Port the app listens on inside the container",
-				String(prior?.containerPort ?? (nginx ? 80 : "")),
+				nginx ? "80" : "",
 				port,
 			),
 		)
 		const hostPortText = await ui.text(
 			"hostPort",
 			"Host port, leave blank to skip port publishing",
-			prior?.hostPort?.toString() ?? "",
+			"",
 			value => (value ? port(value) : undefined),
 		)
 		const network = await ui.text(
 			"network",
 			"Shared Docker network, leave blank to create one for this app",
-			prior?.network ?? "",
+			"",
 			value => (value ? identifier(value) : undefined),
 		)
 		serving = {
@@ -399,20 +355,20 @@ export async function configure(
 				spaFallback: await ui.confirm(
 					"spa",
 					"Serve index.html for app routes such as /dashboard?",
-					prior?.nginx?.spaFallback ?? true,
+					true,
 				),
 			}
 			if (
 				await ui.confirm(
 					"proxy",
 					"Forward requests from Nginx to another service?",
-					!!prior?.nginx?.proxyPath,
+					false,
 				)
 			) {
 				serving.nginx.proxyPath = await ui.text(
 					"proxyPath",
 					"URL path to forward",
-					prior?.nginx?.proxyPath ?? "/api/",
+					"/api/",
 					value =>
 						/^\/[A-Za-z0-9_/-]+$/.test(value)
 							? undefined
@@ -421,7 +377,7 @@ export async function configure(
 				serving.nginx.proxyTarget = await ui.text(
 					"proxyTarget",
 					"Service URL to forward requests to",
-					prior?.nginx?.proxyTarget ?? "",
+					"",
 					value =>
 						/^https?:\/\/[A-Za-z0-9._:-]+\/?$/.test(value)
 							? undefined
@@ -433,13 +389,10 @@ export async function configure(
 	let tailscaleSecureFile: string | undefined
 	if (serving.mode === "container") {
 		for (const environment of environments) {
-			const previous = saved?.environments.find(
-				item => item.branch === environment.branch,
-			)
 			environment.hostConnection = await ui.text(
 				`host:${environment.branch}`,
 				`Docker host service connection in Azure DevOps for ${environment.branch}`,
-				previous?.hostConnection ?? `docker-host-${environment.id}`,
+				`docker-host-${environment.id}`,
 				reference,
 			)
 		}
@@ -447,14 +400,13 @@ export async function configure(
 			await ui.confirm(
 				"tailscale",
 				"Does the pipeline need Tailscale to reach the Docker host?",
-				!!saved?.connectivity.tailscaleSecureFile,
+				false,
 			)
 		) {
 			tailscaleSecureFile = await ui.text(
 				"tailscaleFile",
 				"Azure Secure File name containing the Tailscale auth key",
-				saved?.connectivity.tailscaleSecureFile ??
-					"tailscale-vpn-authkey.txt",
+				"tailscale-vpn-authkey.txt",
 				reference,
 			)
 		}
@@ -466,7 +418,7 @@ export async function configure(
 		await ui.text(
 			"variables",
 			"Browser environment variable names, separated by commas",
-			(saved?.frontendVariables ?? facts.frontendVariables).join(", "),
+			facts.frontendVariables.join(", "),
 			value =>
 				list(value).every(key => /^VITE_[A-Z0-9_]+$/.test(key))
 					? undefined
@@ -475,13 +427,10 @@ export async function configure(
 		),
 	)
 	for (const environment of environments) {
-		const previous = saved?.environments.find(
-			item => item.branch === environment.branch,
-		)
 		environment.id = await ui.text(
 			`environment:${environment.branch}`,
 			`Environment name for ${environment.branch}`,
-			previous?.id ?? environment.id,
+			environment.id,
 			value =>
 				identifier(value) ||
 				(environments.some(
@@ -495,13 +444,13 @@ export async function configure(
 			await ui.confirm(
 				`override:${environment.branch}`,
 				`Override build variables with an Azure Secure File for ${environment.branch}?`,
-				!!previous?.secureFile,
+				false,
 			)
 		) {
 			environment.secureFile = await ui.text(
 				`secureFile:${environment.branch}`,
 				`Azure Secure File name for ${environment.branch}, required on each build`,
-				previous?.secureFile ?? `${id}-${environment.id}.env`,
+				`${id}-${environment.id}.env`,
 				reference,
 			)
 		}
@@ -591,6 +540,16 @@ async function validateAnswers(
 				},
 			)
 			owner[key] = typeof current === "number" ? Number(value) : value
+			if (
+				error.field === "registry.hostname" &&
+				draft.pipeline.registryConnection === current
+			)
+				draft.pipeline.registryConnection = value
+			if (
+				error.field === "application.id" &&
+				draft.registry.repository === current
+			)
+				draft.registry.repository = value
 			if (/^environments\[\d+\]\.id$/.test(error.field))
 				owner.publicFile = `.env.build.${value}`
 		}

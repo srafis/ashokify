@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process"
 import {
+	lstat,
 	mkdtemp,
 	mkdir,
 	readdir,
@@ -108,14 +109,19 @@ try {
 		],
 		{ timeout: 90_000, stdio: "inherit" },
 	)
-	for (const file of [
-		"Dockerfile",
-		"azure-pipelines.yml",
-		"ashokify.config.json",
-		"DEPLOYMENT.md",
-		".ashokify/manifest.json",
-	])
+	for (const file of ["Dockerfile", "azure-pipelines.yml", "DEPLOYMENT.md"])
 		await readFile(join(fixture, file))
+	for (const path of ["ashokify.config.json", ".ashokify"])
+		if (
+			await lstat(join(fixture, path)).then(
+				() => true,
+				error => {
+					if (error.code === "ENOENT") return false
+					throw error
+				},
+			)
+		)
+			throw new Error(`Unexpected saved generator state: ${path}`)
 	if (run("git", ["diff", "--cached", "--name-only"], fixture))
 		throw new Error("Declining commit staged files.")
 	console.log(

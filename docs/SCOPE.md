@@ -1,5 +1,7 @@
 # ashokify: MVP scope and deployment audit
 
+Current workflow: Ashokify generates deployment files once and keeps no saved answers or tracking manifest. Configuration persistence and regeneration sections below describe the earlier design; [IMPLEMENTATION.md](IMPLEMENTATION.md) and [../README.md](../README.md) describe the current behavior.
+
 Audit date: 7 September 2026.
 
 Ashokify helps developers prepare a frontend repository for deployment through Azure DevOps. The first release generates and validates repository configuration; later stages handle hosts, service connections, secure files and pipeline execution.

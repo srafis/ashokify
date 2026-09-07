@@ -1,11 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { execFileSync } from "node:child_process"
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import {
+	lstat,
+	mkdtemp,
+	mkdir,
+	readFile,
+	rm,
+	writeFile,
+} from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { setup } from "../src/workflows/setup.ts"
 import { Cancelled, type Choice, type UserInterface } from "../src/cli/ui.ts"
 import { parseArguments } from "../src/cli/index.ts"
+import { parse as parseYaml } from "yaml"
 import { previewChange } from "../src/cli/preview.ts"
 
 const directories: string[] = []
@@ -108,6 +116,60 @@ afterEach(async () => {
 })
 
 describe("interactive setup workflow", () => {
+	test("derives grouped names without saving answers or tracking metadata", async () => {
+		const { root } = await fixture()
+		const ui = new ScriptedUI({
+			name: "Customer Portal",
+			registry: "registry.example.com",
+			serving: "nginx",
+			servingImage: "nginx:stable-alpine",
+			apply: true,
+		})
+		const result = await setup(root, ui)
+		for (const id of ["id", "repository", "registryConnection"])
+			expect(ui.ids).not.toContain(id)
+		const pipeline = await readFile(
+			join(root, "azure-pipelines.yml"),
+			"utf8",
+		)
+		expect(pipeline).toContain("ashokify-customer-portal-main")
+		expect(pipeline).toContain("registry.example.com/customer-portal:")
+		expect(parseYaml(pipeline).variables.ashokifyRegistryConnection).toBe(
+			"registry.example.com",
+		)
+		expect(result.files).not.toContain("ashokify.config.json")
+		expect(result.files).not.toContain(".ashokify/manifest.json")
+		await expect(
+			lstat(join(root, "ashokify.config.json")),
+		).rejects.toThrow()
+		await expect(lstat(join(root, ".ashokify"))).rejects.toThrow()
+	})
+
+	test("ignores old answers and tracking files without modifying them", async () => {
+		const { root } = await fixture()
+		await writeFile(
+			join(root, "ashokify.config.json"),
+			"old config is not parsed",
+		)
+		await mkdir(join(root, ".ashokify"))
+		await writeFile(
+			join(root, ".ashokify/manifest.json"),
+			"old manifest is not parsed",
+		)
+		git(root, "add", ".")
+		git(root, "commit", "-qm", "legacy metadata")
+		await setup(root, new ScriptedUI({ apply: true }))
+		expect(await readFile(join(root, "ashokify.config.json"), "utf8")).toBe(
+			"old config is not parsed",
+		)
+		expect(
+			await readFile(join(root, ".ashokify/manifest.json"), "utf8"),
+		).toBe("old manifest is not parsed")
+		expect(git(root, "diff", "--name-only")).not.toContain(
+			"ashokify.config.json",
+		)
+	})
+
 	test("uses the detected package manager without asking for a selection", async () => {
 		const { root } = await fixture()
 		const ui = new ScriptedUI({ packageManager: "bun", apply: true })
@@ -117,24 +179,30 @@ describe("interactive setup workflow", () => {
 		expect(ui.ids).not.toContain("recipe")
 		expect(ui.ids).not.toContain("static")
 		expect(ui.messages).toContain("Package manager: npm")
-		const saved = JSON.parse(
-			await readFile(join(root, "ashokify.config.json"), "utf8"),
+		expect(await readFile(join(root, "Dockerfile"), "utf8")).toContain(
+			"npm ci",
 		)
-		expect(saved.build.packageManager).toBe("npm")
 	})
 	test("returns a schema validation error to its field before writing", async () => {
 		const { root } = await fixture()
 		const ui = new ScriptedUI({
-			registryConnection: "invalid;connection",
-			"correct:pipeline.registryConnection": "valid-connection",
+			registry: "registry.example.com:99999",
+			"correct:registry.hostname": "registry.example.com",
+			serving: "nginx",
+			servingImage: "nginx:stable-alpine",
 			apply: true,
 		})
 		await setup(root, ui)
-		expect(ui.ids).toContain("correct:pipeline.registryConnection")
-		const saved = JSON.parse(
-			await readFile(join(root, "ashokify.config.json"), "utf8"),
+		expect(ui.ids).toContain("correct:registry.hostname")
+		const pipeline = parseYaml(
+			await readFile(join(root, "azure-pipelines.yml"), "utf8"),
 		)
-		expect(saved.pipeline.registryConnection).toBe("valid-connection")
+		expect(pipeline.variables.ashokifyRegistryHost).toBe(
+			"registry.example.com",
+		)
+		expect(pipeline.variables.ashokifyRegistryConnection).toBe(
+			"registry.example.com",
+		)
 	})
 	test("artifact generation, declined commit and dirty-rerun rejection", async () => {
 		const { root } = await fixture()
@@ -187,13 +255,16 @@ describe("interactive setup workflow", () => {
 				apply: true,
 			}),
 		)
-		const saved = JSON.parse(
-			await readFile(join(directory, "ashokify.config.json"), "utf8"),
+		const pipeline = parseYaml(
+			await readFile(join(directory, "azure-pipelines.yml"), "utf8"),
 		)
-		expect(saved.application.directory).toBe("apps/web")
-		expect(saved.environments.map((env: { id: string }) => env.id)).toEqual(
-			["feature-payments", "release-payments"],
-		)
+		expect(pipeline.variables.ashokifyApplicationDirectory).toBe("apps/web")
+		expect(pipeline.trigger.branches.include).toEqual([
+			"refs/heads/feature/payments",
+			"refs/heads/release/payments",
+		])
+		await readFile(join(directory, ".env.build.feature-payments"))
+		await readFile(join(directory, ".env.build.release-payments"))
 		expect(git(root, "diff", "--cached", "--name-only")).toBe("")
 	})
 
@@ -231,10 +302,9 @@ describe("interactive setup workflow", () => {
 		await setup(root, ui)
 		expect(ui.ids).toContain("outputDirectory")
 		expect(ui.ids).not.toContain("static")
-		const saved = JSON.parse(
-			await readFile(join(root, "ashokify.config.json"), "utf8"),
+		expect(await readFile(join(root, "Dockerfile"), "utf8")).toContain(
+			"/workspace/site",
 		)
-		expect(saved.build.outputDirectory).toBe("site")
 	})
 
 	test("custom Vite scripts stop with a specific build script issue", async () => {
@@ -330,6 +400,10 @@ describe("interactive setup workflow", () => {
 			root,
 			new ScriptedUI({
 				variables: "VITE_ORIGIN,VITE_LABEL",
+				"adopt:Dockerfile": true,
+				"adopt:azure-pipelines.yml": true,
+				"adopt:scripts/prepare-frontend-env.sh": true,
+				"adopt:DEPLOYMENT.md": true,
 				apply: true,
 			}),
 		)

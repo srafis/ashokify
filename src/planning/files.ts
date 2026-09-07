@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process"
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import {
 	mkdir,
 	chmod,
@@ -31,15 +31,8 @@ export interface FilePlan {
 	/** Application directory used as the plan root. */
 	root?: string
 	applicationDir?: string
-	templateVersion?: number
 	changes: FileChange[]
 	conflicts: FileChange[]
-}
-
-export interface AshokifyManifest {
-	version: 1
-	templateVersion: number
-	files: Record<string, string>
 }
 
 export class FilePlanningError extends Error {
@@ -94,22 +87,12 @@ interface RecoveryIssue {
 	reason: string
 }
 
-interface ParsedManifest {
-	hashes: Map<string, string>
-	valid: boolean
-}
-
-const MANIFEST_PATH = ".ashokify/manifest.json"
 const IGNORE_FILES = new Set([".gitignore", ".dockerignore"])
 // Kept out of the public change shape. It records that the planner showed an
 // ignored existing path to the reviewer. Clearing `conflict` then counts as
 // explicit adoption, while an ignored file that appears after planning still
 // fails the writer's safety check.
 const ignoredReviewedChanges = new WeakSet<FileChange>()
-
-export function hashContent(content: string | Uint8Array): string {
-	return createHash("sha256").update(content).digest("hex")
-}
 
 function normaliseRelativePath(input: string): string {
 	if (typeof input !== "string" || input.length === 0 || input.includes("\0"))
@@ -326,64 +309,6 @@ function isMergeFile(relativePath: string): boolean {
 	return isIgnoreFile(relativePath) || isEnvironmentTemplate(relativePath)
 }
 
-function parseManifest(content: string | null): ParsedManifest {
-	if (content === null) return { hashes: new Map(), valid: true }
-	try {
-		const parsed: unknown = JSON.parse(content)
-		if (!parsed || typeof parsed !== "object")
-			return { hashes: new Map(), valid: false }
-		const record = parsed as Record<string, unknown>
-		const source = record.files ?? record.managed ?? record.managedFiles
-		if (!source || typeof source !== "object")
-			return { hashes: new Map(), valid: false }
-		const hashes = new Map<string, string>()
-		if (Array.isArray(source)) {
-			for (const item of source) {
-				if (!item || typeof item !== "object")
-					return { hashes: new Map(), valid: false }
-				const value = item as Record<string, unknown>
-				const rawPath = value.path ?? value.relativePath
-				const rawHash = value.hash ?? value.lastGeneratedHash
-				if (typeof rawPath !== "string" || typeof rawHash !== "string")
-					return { hashes: new Map(), valid: false }
-				hashes.set(normaliseRelativePath(rawPath), rawHash)
-			}
-		} else {
-			for (const [rawPath, rawValue] of Object.entries(
-				source as Record<string, unknown>,
-			)) {
-				const rawHash =
-					typeof rawValue === "string"
-						? rawValue
-						: rawValue && typeof rawValue === "object"
-							? ((rawValue as Record<string, unknown>).hash ??
-								(rawValue as Record<string, unknown>)
-									.lastGeneratedHash)
-							: null
-				if (typeof rawHash !== "string")
-					return { hashes: new Map(), valid: false }
-				hashes.set(normaliseRelativePath(rawPath), rawHash)
-			}
-		}
-		hashes.delete(MANIFEST_PATH)
-		return { hashes, valid: true }
-	} catch (error) {
-		if (error instanceof UnsafePathError)
-			return { hashes: new Map(), valid: false }
-		return { hashes: new Map(), valid: false }
-	}
-}
-
-function manifestText(
-	templateVersion: number,
-	hashes: Map<string, string>,
-): string {
-	const files: Record<string, string> = {}
-	for (const key of [...hashes.keys()].sort())
-		files[key] = hashes.get(key) as string
-	return `${JSON.stringify({ version: 1, templateVersion, files }, null, 2)}\n`
-}
-
 function operation(before: string | null, after: string | null): FileOperation {
 	if (before === null && after === null) return "unchanged"
 	if (before === null) return "create"
@@ -410,13 +335,11 @@ function changeFor(
 
 /**
  * Build a deterministic, side-effect-free file plan. Existing files are
- * never read through symlinks. The manifest lets later runs distinguish a
- * previous generated file from a deployment file the developer owns.
+ * never read through symlinks. Different existing files always require review.
  */
 export async function planFiles(
 	applicationDir: string,
 	generated: Record<string, string>,
-	templateVersion: number,
 ): Promise<FilePlan> {
 	const root = resolve(applicationDir)
 	const rootStat = await lstat(root)
@@ -438,16 +361,8 @@ export async function planFiles(
 			)
 		normalised.set(relativePath, content)
 	}
-	normalised.delete(MANIFEST_PATH)
-
-	const manifestAbsolute = targetPath(root, MANIFEST_PATH)
-	await assertSafeParents(root, manifestAbsolute)
-	const existingManifest = await readExisting(manifestAbsolute)
-	const parsedManifest = parseManifest(existingManifest?.content ?? null)
-	const managed = parsedManifest.hashes
 	const changes: FileChange[] = []
 	const conflicts: FileChange[] = []
-	const afterByPath = new Map<string, string>()
 
 	for (const relativePath of [...normalised.keys()].sort()) {
 		const target = targetPath(root, relativePath)
@@ -460,7 +375,6 @@ export async function planFiles(
 					? mergeIgnore(existing.content, generatedContent)
 					: mergeEnvironment(existing.content, generatedContent)
 				: generatedContent
-		afterByPath.set(relativePath, after)
 
 		let conflict: string | undefined
 		if (existing && existing.content !== after) {
@@ -468,18 +382,11 @@ export async function planFiles(
 				conflict = "existing ignored file would be overwritten"
 			} else if (isMergeFile(relativePath)) {
 				// Ignore files and public env templates have explicit merge rules.
-			} else if (
-				managed.has(relativePath) &&
-				hashContent(existing.content) !== managed.get(relativePath)
-			) {
-				conflict = "managed file was modified since the last generation"
-			} else if (!managed.has(relativePath)) {
-				conflict = "existing custom file requires explicit adoption"
+			} else {
+				conflict =
+					"existing file differs from generated content and requires review"
 			}
 		}
-		if (!existing && managed.has(relativePath))
-			conflict =
-				"managed file is missing and requires explicit recreation"
 		const change = changeFor(
 			root,
 			relativePath,
@@ -493,67 +400,13 @@ export async function planFiles(
 		if (conflict) conflicts.push(change)
 	}
 
-	for (const relativePath of [...managed.keys()].sort()) {
-		if (normalised.has(relativePath)) continue
-		const target = targetPath(root, relativePath)
-		await assertSafeParents(root, target)
-		const existing = await readExisting(target)
-		if (!existing) continue
-		let conflict: string | undefined
-		if (await checkIgnored(root, target))
-			conflict =
-				"existing ignored managed file cannot be deleted silently"
-		else if (hashContent(existing.content) !== managed.get(relativePath))
-			conflict =
-				"managed file was modified; deletion requires explicit review"
-		const change = changeFor(
-			root,
-			relativePath,
-			existing.content,
-			null,
-			conflict,
-		)
-		if (
-			conflict ===
-			"existing ignored managed file cannot be deleted silently"
-		)
-			ignoredReviewedChanges.add(change)
-		changes.push(change)
-		if (conflict) conflicts.push(change)
-	}
-
-	const manifestAfter = manifestText(
-		templateVersion,
-		new Map(
-			[...afterByPath.entries()].map(([key, value]) => [
-				key,
-				hashContent(value),
-			]),
-		),
-	)
-	let manifestConflict: string | undefined
-	if (!parsedManifest.valid && existingManifest)
-		manifestConflict = "manifest is invalid or was not created by ashokify"
-	else if (existingManifest && (await checkIgnored(root, manifestAbsolute)))
-		manifestConflict =
-			"existing ignored manifest cannot be overwritten silently"
-	const manifestChange = changeFor(
-		root,
-		MANIFEST_PATH,
-		existingManifest?.content ?? null,
-		manifestAfter,
-		manifestConflict,
-	)
-	changes.push(manifestChange)
-	if (manifestConflict) conflicts.push(manifestChange)
-
 	changes.sort((left, right) =>
 		left.relativePath.localeCompare(right.relativePath),
 	)
 	conflicts.sort((left, right) =>
 		left.relativePath.localeCompare(right.relativePath),
 	)
-	return { root, applicationDir: root, templateVersion, changes, conflicts }
+	return { root, applicationDir: root, changes, conflicts }
 }
 
 async function currentForApply(
@@ -814,16 +667,9 @@ export async function applyPlan(plan: FilePlan): Promise<void> {
 		seen.add(change.relativePath)
 	}
 
-	// The manifest is written last, so an interrupted run never advertises a
-	// generated file that has not yet reached disk.
-	const ordered = [...mutable].sort((left, right) => {
-		const leftManifest = left.relativePath === MANIFEST_PATH ? 1 : 0
-		const rightManifest = right.relativePath === MANIFEST_PATH ? 1 : 0
-		return (
-			leftManifest - rightManifest ||
-			left.relativePath.localeCompare(right.relativePath)
-		)
-	})
+	const ordered = [...mutable].sort((left, right) =>
+		left.relativePath.localeCompare(right.relativePath),
+	)
 	const backups: Backup[] = []
 	const createdDirectories = new Map<string, CreatedDirectory>()
 	try {

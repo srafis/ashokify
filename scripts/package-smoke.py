@@ -60,8 +60,7 @@ try:
     for prompt in [
         "Where should the pipeline run?",
         "Which branches should run the pipeline?", "Additional branches", "App name",
-        "Deployment name for Docker images and containers", "Container registry hostname", "Image name in the registry",
-        "Registry service connection name in Azure DevOps",
+        "Container registry hostname",
         "npm version for builds", "Node.js version for builds", "Build command",
         "Build output folder", "Build platform",
         "How should the pipeline deliver your app?",

@@ -1,11 +1,10 @@
-import { lstat, readFile, realpath } from "node:fs/promises"
-import { join, relative, sep } from "node:path"
+import { realpath } from "node:fs/promises"
+import { relative, sep } from "node:path"
 import { previewChange } from "../cli/preview.ts"
 import { preflight, assertSnapshot, commitReviewed } from "../adapters/git.ts"
 import { applyPlan, planFiles } from "../planning/files.ts"
 import { inspectProject } from "../inspection/index.ts"
-import { validateConfig } from "../config/index.ts"
-import type { DeploymentConfig, ValidationResult } from "../config/types.ts"
+import type { ValidationResult } from "../config/types.ts"
 import { configure } from "../cli/configure.ts"
 import { Cancelled, type UserInterface } from "../cli/ui.ts"
 import { renderFiles } from "../recipes/vite-static/index.ts"
@@ -18,34 +17,16 @@ export interface SetupResult {
 	validation: ValidationResult[]
 }
 
-async function loadSaved(
-	directory: string,
-): Promise<DeploymentConfig | undefined> {
-	const path = join(directory, "ashokify.config.json")
-	try {
-		const stat = await lstat(path)
-		if (!stat.isFile() || stat.isSymbolicLink())
-			throw new Error("ashokify.config.json must be a regular file.")
-		return validateConfig(JSON.parse(await readFile(path, "utf8")))
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
-		throw new Error(
-			`Cannot load saved settings: ${(error as Error).message}`,
-		)
-	}
-}
-
 export async function setup(
 	cwd: string,
 	ui: UserInterface,
 ): Promise<SetupResult> {
 	const directory = await realpath(cwd)
 	const snapshot = await preflight(directory)
-	const saved = await loadSaved(directory)
 	const facts = await inspectProject(directory, snapshot.root)
-	const config = await configure(facts, snapshot.root, ui, saved)
+	const config = await configure(facts, snapshot.root, ui)
 	const generated = renderFiles(config)
-	const plan = await planFiles(directory, generated, config.templateVersion)
+	const plan = await planFiles(directory, generated)
 	if (plan.changes.some(change => change.operation !== "unchanged"))
 		ui.info(
 			"Review the file changes below. This preview hides environment values and recognized credentials.",
@@ -142,7 +123,7 @@ export async function setup(
 		return { status: "committed", files, validation }
 	}
 	ui.info(
-		"Changes are saved and unstaged. Setup needs a clean Git working tree to run again.",
+		"Changes are saved and unstaged. Edit the deployment files directly when you need to change the setup.",
 	)
 	return { status: "written", files, validation }
 }

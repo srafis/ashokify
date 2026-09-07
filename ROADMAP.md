@@ -13,7 +13,7 @@ This roadmap follows [the MVP scope](docs/SCOPE.md) and [the high-level design](
 
 ## MVP: local repository preparation
 
-Implementation and local verification are complete. The npm archive is prepared; package publication and the first real Azure deployment remain separate actions.
+Implementation and local verification are complete. The CLI generates deployment files without retaining answers or ownership metadata. The npm archive is prepared; package publication and the first real Azure deployment remain separate actions.
 
 ### 1. CLI foundation and Git preflight
 
@@ -29,14 +29,14 @@ Completion criteria: the CLI starts in a clean fixture repository, rejects each 
 
 - [x] Adapt the narrow shadcn detection logic behind an internal interface. Pin the upstream revision and preserve its license and attribution.
 - [x] Detect Vite, package metadata, scripts, lockfiles and output settings without executing application configuration or installing dependencies.
-- [x] Confirm static output, reject known server-dependent builds and support manual correction. Require one application directory for ambiguous monorepos; report unsupported shared-workspace builds.
-- [x] Implement the scope's prompt sequence with Azure DevOps enabled and AWS and unsupported application types visibly disabled.
+- [x] Detect static Vite builds, reject unknown or server-dependent builds with specific reasons and prompt only for unresolved settings. Require one application directory for ambiguous monorepos; report unsupported shared-workspace builds.
+- [x] Use concise prompts with Azure DevOps enabled and AWS disabled. Detect the build type without a framework confirmation menu.
 - [x] Default trigger branches to `main`, `staging` and `develop`; accept custom branches, deduplicate and require at least one. Map full branch names to unique environment identifiers and reject normalization collisions.
-- [x] Confirm project name, registry hostname, image repository and registry connection separately. Prefer saved settings on reruns and preserve the target project's package manager.
+- [x] Collect the app name and registry hostname, derive image and connection names, and preserve the target project's package manager.
 - [x] Resolve the application's Node engine constraint to a concrete compatible build version, using Node 22 when absent. Confirm the build command, output directory and target architecture.
 - [x] Collect the serving choice, applicable host connections, ports, networks and optional Tailscale requirements without assigning shared host resources implicitly.
 - [x] Discover and confirm frontend variable names and exact secure-override references without copying private local values.
-- [x] Define and validate the versioned, nonsecret `ashokify.config.json` schema, package-manager support and serving-input rules.
+- [x] Validate answers in memory, including package-manager support and serving requirements. Do not save a generator configuration file.
 
 Completion criteria: React and Vue static Vite fixtures produce the same recipe with editable, evidence-backed settings. Unknown stacks, conflicting lockfiles, invalid engine constraints and branch collisions stop generation until resolved.
 
@@ -57,8 +57,8 @@ Completion criteria: generated YAML parses and every selected branch has consist
 
 ### 4. Preview, controlled writes and optional commit
 
-- [x] Plan creates, updates, unchanged files, conflicts and proposed deletions with expected content hashes and readable diffs.
-- [x] Track managed paths, template version and last generated hashes in `.ashokify/manifest.json`.
+- [x] Plan creates, updates, unchanged files and conflicts using the current file contents and readable diffs.
+- [x] Leave the generated files for the project to maintain. Do not create a tracking manifest or delete files from earlier runs.
 - [x] Preserve unrelated content and existing quality gates. Require explicit review before adopting or replacing custom deployment files; merge ignore patterns without duplicates.
 - [x] Validate proposed files in temporary copies before applying the reviewed change set. Report checks as passed, failed or not run.
 - [x] Recheck HEAD, index and worktree before writing, then check expected content as each file is applied. Recover from partial failure without overwriting concurrent user edits.
@@ -76,7 +76,7 @@ Completion criteria: fixture tests cover cancellation, existing-file conflicts, 
 - [x] Verify optional and required secure overrides, public/private variable separation and the absence of credentials in generated files, logs and published artifacts.
 - [x] Run the packed executable using Node alone, without Bun or a TypeScript compilation step on the user's machine. Verify bundled templates and published package contents.
 - [x] Add automated type checks, tests and package verification to CI.
-- [x] Expand the README with installation, supported inputs, a setup walkthrough, rerun/conflict behavior and deployment handoff instructions.
+- [x] Expand the README with installation, supported inputs, a setup walkthrough, existing-file review and instructions for maintaining deployment files.
 - [x] Prepare the first package release after the MVP completion criteria in `docs/SCOPE.md` pass.
 
 Completion criteria: a developer can prepare a supported repository using the packaged CLI without Azure authentication, inspect the generated changes and optionally commit them. Documentation distinguishes local validation from cloud readiness and records any checks not run.
@@ -85,7 +85,7 @@ Completion criteria: a developer can prepare a supported repository using the pa
 
 ### 6. Azure DevOps setup using an existing host
 
-- [ ] Add a separate cloud workflow that consumes the saved configuration and records nonsecret resource IDs, configuration fingerprints and step outcomes for resumption.
+- [ ] Design a separate cloud workflow around the deployment files and freshly collected settings. Decide what cloud progress needs to be recorded for resumption.
 - [ ] Check Azure CLI tooling and access to the explicit organization/project through DevOps reads. Distinguish authentication, permissions, resource visibility and network failures.
 - [ ] Discover resources and verify identity and configuration before reuse. Check existing host reachability, architecture, authenticated Docker access and application resource ownership when container deployment is selected.
 - [ ] Preview and confirm cloud mutations, then create or reuse registry/host connections and upload selected private files under their confirmed Azure names.

@@ -110,7 +110,6 @@ function parseYaml(content: string, label: string): Record<string, unknown> {
 
 function expectedPaths(config: DeploymentConfig): string[] {
 	const paths = [
-		"ashokify.config.json",
 		"Dockerfile",
 		"azure-pipelines.yml",
 		".env.example",
@@ -135,21 +134,6 @@ function assertNoUnsafePath(path: string): void {
 		path.split("/").some(part => part === ".." || part === "")
 	)
 		throw new Error(`Generated path is not relative: ${path}`)
-}
-
-function validateConfigFile(
-	config: DeploymentConfig,
-	files: GeneratedFiles,
-): string {
-	const parsed = JSON.parse(
-		requireFile(files, "ashokify.config.json"),
-	) as unknown
-	const expected = validateSharedConfig(config)
-	if (JSON.stringify(parsed) !== JSON.stringify(expected))
-		throw new Error(
-			"ashokify.config.json does not match the selected deployment configuration.",
-		)
-	return "The generated JSON parses and matches the validated configuration."
 }
 
 function validateEnvFiles(
@@ -636,18 +620,14 @@ export function validateGenerated(
 	results.push(
 		check("generated-paths", () => {
 			const expected = expectedPaths(checked)
-			const rootManaged = new Set([".ashokify/manifest.json"])
 			for (const path of Object.keys(files)) {
 				assertNoUnsafePath(path)
-				if (!expected.includes(path) && !rootManaged.has(path))
+				if (!expected.includes(path))
 					throw new Error(`Unexpected generated path ${path}.`)
 			}
 			for (const path of expected) requireFile(files, path)
 			return "All required recipe files are present under the application directory."
 		}),
-	)
-	results.push(
-		check("configuration-file", () => validateConfigFile(checked, files)),
 	)
 	results.push(
 		check("public-environment-files", () =>

@@ -2,7 +2,7 @@
 
 Prepare a Vite static frontend repository for deployment through Azure DevOps. Ashokify detects the build setup, asks for deployment settings, shows the proposed files and offers one local commit after validation.
 
-The CLI implements local repository preparation. Creating cloud resources, uploading secure files, registering pipelines and running deployments remain separate steps described in the generated `DEPLOYMENT.md`.
+The CLI is a one-time deployment file generator. Answers stay in memory during setup; it writes no Ashokify configuration or tracking files. Creating cloud resources, uploading secure files, registering pipelines and running deployments remain separate steps described in the generated `DEPLOYMENT.md`.
 
 ## Run from this repository
 
@@ -41,7 +41,7 @@ Start with a clean Git worktree and index. Staged files, unstaged edits, unresol
 
 1. Select Azure DevOps. Ashokify checks that the app has a supported static Vite build.
 2. Choose trigger branches. `main`, `staging` and `develop` start selected; custom branches are optional.
-3. Confirm the project name, image identifier, registry hostname and registry service-connection name. The registry defaults to `sifars.azurecr.io` and is editable.
+3. Enter the app name and container registry hostname. Ashokify derives the deployment and image names from the app name, and uses the registry hostname as the Azure DevOps service connection name. The registry defaults to `sifars.azurecr.io`.
 4. Confirm package manager, concrete versions, build command, output directory and target architecture.
 5. Choose external/deferred serving or configure a serving container. Nginx is an explicit option with no default selection. Container serving requires an image, asset destination, port and per-environment Docker-host connection names. Host port bindings, shared networks and Tailscale are optional.
 6. Confirm public frontend variable names and any required Azure Secure File references.
@@ -55,7 +55,7 @@ Terminal previews redact environment values and recognizable credential assignme
 
 ## Generated deployment files
 
-Ashokify writes `ashokify.config.json`, `azure-pipelines.yml`, a Dockerfile, public environment templates, ignore rules, a managed-file manifest and `DEPLOYMENT.md` inside the selected application directory. Container serving also gets runtime Compose and an explicit build override. Nginx configuration appears only when requested.
+Ashokify writes `azure-pipelines.yml`, a Dockerfile, public environment templates, ignore rules and `DEPLOYMENT.md` inside the selected application directory. Container serving also gets runtime Compose and an explicit build override. Nginx configuration appears only when requested.
 
 External or deferred serving produces a static artifact workflow. You still need a way to deliver and serve that artifact. A configured serving container produces an image build/publish workflow and deployment steps that use the exact published image. Resource connections and host readiness must be established before running the pipeline.
 
@@ -63,11 +63,15 @@ Public environment files contain placeholders for unresolved values. Supply inte
 
 Generated pipelines use the full branch-to-environment mapping. Application/environment Compose names keep projects separate on a shared host; configured ports and existing networks still need a host-level availability check.
 
-## Reruns and existing files
+## Maintaining deployment files
 
-Saved configuration provides defaults on later invocations. The manifest records generated hashes so Ashokify can detect edits to managed files. Existing custom deployment files and modified managed files require explicit review before replacement. Ignore rules and existing public environment values are preserved during merging.
+Edit the generated files directly after setup. Use `Dockerfile` for build versions and commands, `azure-pipelines.yml` for branches and Azure connections, and `docker-compose.yml` for ports and networks. Keep related names consistent across the files. `DEPLOYMENT.md` describes the generated setup and remaining deployment steps.
 
-An identical run after committing produces no diff and no empty commit. If you decline a commit, resolve the resulting dirty worktree before starting another invocation. Commit-hook and Git identity failures retain the generated work and report the index state.
+If you run Ashokify again, it inspects the app and asks for new answers. It does not restore previous answers, track ownership or delete files from earlier runs. Any existing deployment file with different content requires explicit review before replacement. Ignore rules and existing public environment values are merged.
+
+Files that already match the output remain unchanged, and no empty commit is created. A new invocation still requires a clean Git working tree. Commit-hook and Git identity failures retain the generated work and report the index state.
+
+Older `ashokify.config.json` and `.ashokify/manifest.json` files are ignored and left untouched. They are no longer needed by Ashokify and can be removed from projects that used an earlier version.
 
 Ashokify checks for concurrent changes before writing and committing. If an interrupted write needs recovery, it restores only files that still match the content it wrote and reports any remaining work.
 

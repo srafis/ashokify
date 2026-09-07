@@ -1,5 +1,7 @@
 # ashokify: high-level design
 
+Current workflow: Ashokify generates deployment files once and keeps no saved answers or tracking manifest. Configuration persistence and regeneration sections below describe the earlier design; [IMPLEMENTATION.md](IMPLEMENTATION.md) and [../README.md](../README.md) describe the current behavior.
+
 Status: the local MVP is implemented. [IMPLEMENTATION.md](IMPLEMENTATION.md) records its decisions and verification; cloud workflows below remain planned.
 
 Date: 7 September 2026.

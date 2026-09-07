@@ -46,7 +46,7 @@ afterEach(async () => {
 })
 
 describe("file planning and application", () => {
-	test("creates a manifest, merges public files, and reruns without a diff", async () => {
+	test("merges public files without metadata and leaves identical files unchanged", async () => {
 		const root = await repository()
 		await writeFile(join(root, ".gitignore"), "custom-cache\n!keep.txt\n")
 		await writeFile(
@@ -59,7 +59,7 @@ describe("file planning and application", () => {
 				"PUBLIC_URL=<set-public-value>\nPUBLIC_TOKEN=<set-public-value>\n",
 			"deploy.yml": "steps: []\n",
 		}
-		const plan = await planFiles(root, generated, 1)
+		const plan = await planFiles(root, generated)
 		expect(plan.conflicts).toHaveLength(0)
 		await applyPlan(plan)
 		expect(await readFile(join(root, ".env.example"), "utf8")).toContain(
@@ -68,48 +68,40 @@ describe("file planning and application", () => {
 		expect(await readFile(join(root, ".env.example"), "utf8")).toContain(
 			"PUBLIC_TOKEN=<set-public-value>",
 		)
-		const manifest = JSON.parse(
-			await readFile(join(root, ".ashokify/manifest.json"), "utf8"),
-		) as { files: Record<string, string> }
-		expect(manifest.files[".ashokify/manifest.json"]).toBeUndefined()
-		expect(manifest.files["deploy.yml"]).toBeString()
+		await expect(lstat(join(root, ".ashokify"))).rejects.toThrow()
 
-		const rerun = await planFiles(root, generated, 1)
+		const rerun = await planFiles(root, generated)
 		expect(rerun.conflicts).toHaveLength(0)
 		expect(
 			rerun.changes.every(change => change.operation === "unchanged"),
 		).toBe(true)
 	})
 
-	test("reports custom and changed managed files as conflicts", async () => {
+	test("requires review before replacing any different existing file", async () => {
 		const root = await repository()
-		const first = await planFiles(root, { "deploy.yml": "one\n" }, 1)
+		const first = await planFiles(root, { "deploy.yml": "one\n" })
 		await applyPlan(first)
 		await writeFile(join(root, "deploy.yml"), "developer edit\n")
-		const changed = await planFiles(root, { "deploy.yml": "two\n" }, 1)
-		expect(changed.conflicts[0]?.conflict).toContain("modified")
+		const changed = await planFiles(root, { "deploy.yml": "two\n" })
+		expect(changed.conflicts[0]?.conflict).toContain("requires review")
 		await expect(applyPlan(changed)).rejects.toBeInstanceOf(
 			FileConflictError,
 		)
 
 		const customRoot = await repository()
 		await writeFile(join(customRoot, "Dockerfile"), "FROM scratch\n")
-		const custom = await planFiles(
-			customRoot,
-			{ Dockerfile: "FROM node:22\n" },
-			1,
-		)
-		expect(custom.conflicts[0]?.conflict).toContain("custom")
+		const custom = await planFiles(customRoot, {
+			Dockerfile: "FROM node:22\n",
+		})
+		expect(custom.conflicts[0]?.conflict).toContain("requires review")
 	})
 
 	test("rejects traversal and symlink paths before writing", async () => {
 		const root = await repository()
-		await expect(
-			planFiles(root, { "../outside": "bad" }, 1),
-		).rejects.toThrow()
+		await expect(planFiles(root, { "../outside": "bad" })).rejects.toThrow()
 		await symlink(join(root, "tracked.txt"), join(root, "link.txt"))
 		await expect(
-			planFiles(root, { "link.txt": "replacement" }, 1),
+			planFiles(root, { "link.txt": "replacement" }),
 		).rejects.toThrow()
 		expect(await readFile(join(root, "tracked.txt"), "utf8")).toBe(
 			"tracked\n",
@@ -122,14 +114,10 @@ describe("file planning and application", () => {
 			join(root, ".dockerignore"),
 			"!public.env\n.env.*\n!.env.local\n",
 		)
-		const plan = await planFiles(
-			root,
-			{
-				".dockerignore":
-					".env\n.env.*\n!.env.example\n!.env.build.*\n.env.build.*.override\n",
-			},
-			1,
-		)
+		const plan = await planFiles(root, {
+			".dockerignore":
+				".env\n.env.*\n!.env.example\n!.env.build.*\n.env.build.*.override\n",
+		})
 		const merged =
 			plan.changes.find(change => change.relativePath === ".dockerignore")
 				?.after ?? ""
@@ -152,14 +140,10 @@ describe("file planning and application", () => {
 			".env.build.*\n!.env.example\n",
 		)
 		await writeFile(join(root, ".env.build.dev"), "PUBLIC_URL=old\n")
-		const plan = await planFiles(
-			root,
-			{
-				".env.build.dev":
-					"PUBLIC_URL=new\nPUBLIC_TOKEN=<set-public-value>\n",
-			},
-			1,
-		)
+		const plan = await planFiles(root, {
+			".env.build.dev":
+				"PUBLIC_URL=new\nPUBLIC_TOKEN=<set-public-value>\n",
+		})
 		expect(plan.conflicts).toHaveLength(1)
 		expect(plan.conflicts[0]?.conflict).toContain("ignored")
 		for (const change of plan.changes) delete change.conflict
@@ -170,44 +154,37 @@ describe("file planning and application", () => {
 		)
 	})
 
-	test("refuses to read or write a manifest through a parent symlink", async () => {
+	test("refuses to write generated files through a parent symlink", async () => {
 		const root = await repository()
 		const outside = await mkdtemp(join(tmpdir(), "ashokify-outside-"))
 		directories.push(outside)
-		await symlink(outside, join(root, ".ashokify"))
+		await symlink(outside, join(root, "scripts"))
 		await expect(
-			planFiles(root, { "deploy.yml": "x\n" }, 1),
+			planFiles(root, { "scripts/deploy.sh": "x\n" }),
 		).rejects.toThrow()
-		expect(
-			await lstat(join(outside, "manifest.json"))
-				.then(() => true)
-				.catch(() => false),
-		).toBe(false)
+		await expect(lstat(join(outside, "deploy.sh"))).rejects.toThrow()
 	})
 
-	test("proposes deletion when a managed environment is removed", async () => {
+	test("leaves files outside the generated set untouched", async () => {
 		const root = await repository()
-		const first = await planFiles(
-			root,
-			{ ".env.build.dev": "PUBLIC_URL=one\n" },
-			1,
-		)
+		const first = await planFiles(root, {
+			".env.build.dev": "PUBLIC_URL=one\n",
+		})
 		await applyPlan(first)
-		const removed = await planFiles(root, {}, 1)
-		const deletion = removed.changes.find(
-			change => change.relativePath === ".env.build.dev",
+		const removed = await planFiles(root, {})
+		expect(removed.changes).toHaveLength(0)
+		await applyPlan(removed)
+		expect(await readFile(join(root, ".env.build.dev"), "utf8")).toBe(
+			"PUBLIC_URL=one\n",
 		)
-		expect(deletion?.operation).toBe("delete")
-		expect(deletion?.after).toBeNull()
 	})
 
 	test("rolls back files already written when a later target becomes unsafe", async () => {
 		const root = await repository()
-		const plan = await planFiles(
-			root,
-			{ "created/first.txt": "first\n", "later/file.txt": "later\n" },
-			1,
-		)
+		const plan = await planFiles(root, {
+			"created/first.txt": "first\n",
+			"later/file.txt": "later\n",
+		})
 		await writeFile(
 			join(root, "later"),
 			"a file now blocks the planned directory",
@@ -358,22 +335,22 @@ describe("Git preflight and reviewed commits", () => {
 	test("commits only reviewed paths with exact contents", async () => {
 		const root = await repository()
 		const snapshot = await preflight(root)
-		const plan = await planFiles(root, { "generated.yml": "exact\n" }, 1)
+		const plan = await planFiles(root, { "generated.yml": "exact\n" })
 		await applyPlan(plan)
 		await writeFile(join(root, "unrelated.txt"), "do not stage\n")
 		await rm(join(root, "unrelated.txt"))
 		await commitReviewed(snapshot, plan.changes, "chore: generated files")
 		expect(git(root, "status", "--porcelain")).toBe("")
 		expect(git(root, "show", "HEAD:generated.yml")).toBe("exact\n")
-		expect(git(root, "show", "HEAD:.ashokify/manifest.json")).toContain(
-			'"templateVersion": 1',
-		)
+		expect(
+			git(root, "show", "--pretty=format:", "--name-only", "HEAD").trim(),
+		).toBe("generated.yml")
 	})
 
 	test("refuses a changed HEAD or unrelated staged index entry", async () => {
 		const root = await repository()
 		const snapshot = await preflight(root)
-		const plan = await planFiles(root, { "generated.yml": "exact\n" }, 1)
+		const plan = await planFiles(root, { "generated.yml": "exact\n" })
 		await applyPlan(plan)
 		await writeFile(join(root, "unrelated.txt"), "staged\n")
 		git(root, "add", "unrelated.txt")
@@ -386,11 +363,9 @@ describe("Git preflight and reviewed commits", () => {
 
 		const changedHead = await repository()
 		const changedSnapshot = await preflight(changedHead)
-		const changedPlan = await planFiles(
-			changedHead,
-			{ "generated.yml": "head\n" },
-			1,
-		)
+		const changedPlan = await planFiles(changedHead, {
+			"generated.yml": "head\n",
+		})
 		await applyPlan(changedPlan)
 		await writeFile(join(changedHead, "head-change.txt"), "head changed\n")
 		git(changedHead, "add", "head-change.txt")
@@ -407,7 +382,7 @@ describe("Git preflight and reviewed commits", () => {
 	test("leaves staged files when a commit hook rejects the commit", async () => {
 		const root = await repository()
 		const snapshot = await preflight(root)
-		const plan = await planFiles(root, { "generated.yml": "hooked\n" }, 1)
+		const plan = await planFiles(root, { "generated.yml": "hooked\n" })
 		await applyPlan(plan)
 		await writeFile(
 			join(root, ".git/hooks/pre-commit"),
@@ -422,6 +397,6 @@ describe("Git preflight and reviewed commits", () => {
 				.trim()
 				.split("\n")
 				.sort(),
-		).toEqual([".ashokify/manifest.json", "generated.yml"])
+		).toEqual(["generated.yml"])
 	})
 })

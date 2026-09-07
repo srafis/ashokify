@@ -76,10 +76,6 @@ function yamlQuote(value: string): string {
 	return `'${value.replaceAll("'", "''")}'`
 }
 
-function json(value: unknown): string {
-	return `${JSON.stringify(value, null, 2)}\n`
-}
-
 function branchRef(branch: string): string {
 	return branch.startsWith("refs/heads/") ? branch : `refs/heads/${branch}`
 }
@@ -686,8 +682,22 @@ function deploymentDoc(config: DeploymentConfig): string {
 		"## Local validation",
 		"",
 		`- Replace placeholders in the selected file, then run \`bash scripts/prepare-frontend-env.sh ${config.environments[0]?.publicFile ?? ".env.build.main"} \"\" -- docker buildx build --platform ${config.build.architecture} --file Dockerfile --target ${buildTarget}${buildOutput} .\`.`,
-		"- Run the structural validator before applying changes. It does not contact Azure DevOps or run a cloud deployment.",
+		"- Ashokify checked the generated files before writing them. It did not run a Docker build or verify Azure access.",
+		"",
+		"## Maintaining these files",
+		"",
+		"Edit these deployment files directly when the app changes. Ashokify does not save your answers or require a configuration file.",
+		"",
+		"- Change build versions and commands in `Dockerfile`.",
+		"- Change branches, registry names and Azure service connections in `azure-pipelines.yml`.",
+		"- Keep image references, Compose project names and public environment files consistent when renaming the app or its environments.",
 	)
+	if (config.serving.mode === "container")
+		lines.push(
+			"- Change ports and networks in `docker-compose.yml`, and local build settings in `docker-compose.override.yml`.",
+		)
+	if (config.serving.mode === "container" && config.serving.nginx)
+		lines.push("- Change routing and proxy settings in `nginx.conf`.")
 	if (config.serving.mode === "artifact") {
 		lines.push(
 			"",
@@ -720,7 +730,6 @@ export function renderFiles(input: DeploymentConfig): GeneratedFiles {
 	const config = validateSharedConfig(input)
 	validateConfig(config)
 	const files: GeneratedFiles = {}
-	files["ashokify.config.json"] = json(config)
 	files["Dockerfile"] = dockerfile(config)
 	files["azure-pipelines.yml"] = renderAzurePipeline(config)
 	files[".env.example"] = exampleEnv(config.frontendVariables)
