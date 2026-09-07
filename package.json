@@ -1,17 +1,43 @@
 {
 	"name": "ashokify",
-	"module": "app.ts",
+	"version": "0.1.0",
+	"description": "Prepare Vite static frontends for Azure DevOps deployment",
 	"type": "module",
-	"devDependencies": {
-		"@types/bun": "latest"
+	"bin": {
+		"ashokify": "dist/cli.js"
 	},
-	"peerDependencies": {
-		"typescript": "^7"
+	"files": [
+		"dist",
+		"README.md",
+		"THIRD_PARTY_NOTICES.md"
+	],
+	"scripts": {
+		"dev": "bun app.ts",
+		"build": "bun scripts/build.ts",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test",
+		"check": "bun run typecheck && bun test && bun run build",
+		"format": "prettier --write app.ts package.json src scripts tests .github README.md ROADMAP.md THIRD_PARTY_NOTICES.md docs/IMPLEMENTATION.md",
+		"format:check": "prettier --check app.ts package.json src scripts tests .github README.md ROADMAP.md THIRD_PARTY_NOTICES.md docs/IMPLEMENTATION.md",
+		"prepack": "bun run build",
+		"verify:package": "bun scripts/verify-package.ts",
+		"verify:docker": "bun scripts/verify-docker.ts"
+	},
+	"devDependencies": {
+		"@types/bun": "^1.3.10",
+		"@types/diff": "^8.0.0",
+		"@types/semver": "^7.7.1",
+		"prettier": "^3.9.6",
+		"typescript": "^7.0.2"
 	},
 	"dependencies": {
-		"@clack/prompts": "^1.7.0"
+		"@clack/prompts": "^1.7.0",
+		"diff": "^9.0.0",
+		"semver": "^7.8.5",
+		"yaml": "^2.9.0"
 	},
 	"engines": {
-		"bun": ">=1.4.0"
-	}
+		"node": ">=22"
+	},
+	"packageManager": "bun@1.4.2"
 }

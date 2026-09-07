@@ -1,6 +1,6 @@
 # ashokify: high-level design
 
-Status: proposed design, ready to guide MVP implementation.
+Status: the local MVP is implemented. [IMPLEMENTATION.md](IMPLEMENTATION.md) records its decisions and verification; cloud workflows below remain planned.
 
 Date: 7 September 2026.
 
@@ -12,7 +12,7 @@ Ashokify is an interactive CLI that prepares a repository for deployment using t
 
 The MVP prepares Vite static frontends for Azure DevOps. Later releases will configure external resources and execute deployments. The implementation is one TypeScript CLI package with separate modules for inspection, prompts, planning, generation and external operations.
 
-This document defines the intended architecture. The current repository contains a minimal Bun entry point, TypeScript configuration and `@clack/prompts`; these workflows are not implemented yet.
+This document defines the architecture. At design time, the repository contained only a minimal Bun entry point, TypeScript configuration and `@clack/prompts`. The local preparation workflow is now implemented.
 
 ## 2. Scope and decisions
 
